@@ -1,0 +1,1202 @@
+﻿/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#include "pch.h"
+#include "macchina-passthru.h"
+#include "Logger.h"
+#include "usbcomm.h"
+#include "globals.h"
+#include "channel.h"
+#include <tuple>
+
+
+/*
+http://www.drewtech.com/support/passthru/open.html
+Establish a logical communication channel with the vehicle network (via the PassThru device) using the specified network layer protocol and selected protocol options.
+*/
+DllExport PassThruOpen(void* pName, unsigned long* pDeviceID) {
+	LOGGER.logInfo("DllExport", "PassThruOpen called");
+	*pDeviceID = 1L;
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/close.html
+Close all communication with the PassThru device. All channels will be disconnected from the network,
+periodic messages will halt, and the hardware will return to its default state.
+*/
+DllExport PassThruClose(unsigned long DeviceID) {
+	LOGGER.logInfo("DllExport", "PassThruClose called");
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/connect.html
+Establish a logical communication channel with the vehicle network (via the PassThru device) using the specified network layer protocol and selected protocol options.
+*/
+DllExport PassThruConnect(unsigned long DeviceID, unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate, unsigned long* pChannelID) {
+	LOGGER.logInfo("DllExport", "PassThruConnect called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+
+	int res_code;
+	unsigned long chan_id;
+	std::tie(res_code, chan_id) = channels.addChannel(ProtocolID, Flags, Baudrate);
+	if (res_code != STATUS_NOERROR) { // Error creating a channel!
+		return res_code;
+	}
+	else { // OK! Copy ID back to app
+		*pChannelID = chan_id;
+		return STATUS_NOERROR;
+	}
+}
+
+/*
+http://www.drewtech.com/support/passthru/disconnect.html
+Terminate an existing logical communication channel between the User Application and the vehicle network (via the PassThru device).
+Once disconnected the channel identifier or handle is invalid. For the associated network protocol this function will terminate
+the transmitting of periodic messages and the filtering of receive messages. The PassThru device periodic and filter message tables
+will be cleared.
+*/
+DllExport PassThruDisconnect(unsigned long ChannelID) {
+	LOGGER.logInfo("DllExport", "PassThruDisconnect called - Channel is %lu", ChannelID);
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return channels.removeChannel(ChannelID);
+}
+
+/*
+http://www.drewtech.com/support/passthru/readmsgs.html
+Receive network protocol messages, receive indications, and transmit indications from an existing logical communication channel.
+Messages will flow through PassThru device to the User Application..
+*/
+DllExport PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout) {
+	//LOGGER.logInfo("DllExport", "PassThruReadMsgs called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return channels.requestChannelData(ChannelID, pMsg, pNumMsgs, Timeout);
+}
+
+/*
+http://www.drewtech.com/support/passthru/writemsgs.html
+Transmit network protocol messages over an existing logical communication channel. Messages will flow through PassThru device to the vehicle network.
+*/
+DllExport PassThruWriteMsgs(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout) {
+	LOGGER.logInfo("DllExport", "PassThruWriteMsgs called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return channels.send_payload(ChannelID, pMsg, pNumMsgs, Timeout);
+}
+
+/*
+http://www.drewtech.com/support/passthru/startperiodicmsg.html
+Repetitively transmit network protocol messages at the specified time interval over an existing logical communication channel.
+There is a limit of ten periodic messages per network layer protocol.
+*/
+DllExport PassThruStartPeriodicMsg(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pMsgID, unsigned long TimeInterval) {
+	LOGGER.logInfo("DllExport", "PassThruStartPeriodicMsg called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/stopperiodicmsg.html
+Terminate the specified periodic message. Once terminated the message identifier or handle value is invalid
+*/
+DllExport PassThruStopPeriodicMsg(unsigned long ChannelID, unsigned long MsgID) {
+	LOGGER.logInfo("DllExport", "PassThruStopPeriodicMsg called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/startmsgfilter.html
+The PassThruStartMsgFilter function is used to setup a network protocol filter that will selectively restrict or
+limit network protocol messages received by the PassThru device. The filter messages will flow from the User Application
+to the PassThru device. There is a limit of ten filter messages per network layer protocol.
+The PassThru device will block all vehicle network receive frames by default, when no filters are defined.
+The CLEAR_RX_BUFFER (PassThruIoctl function) command must be used after establishing filters to ensure that the receive
+queue only contains receive frames that adhere to the filter criteria. The PassThruStartMsgFilter function does not cause
+existing receive messages to be removed from the PassThru device receive queue.
+*/
+DllExport PassThruStartMsgFilter(unsigned long ChannelID, unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID) {
+	LOGGER.logInfo("DllExport", "PassThruStartMsgFilter called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return channels.setFilter(ChannelID, FilterType, pMaskMsg, pPatternMsg, pFlowControlMsg, pFilterID);
+}
+
+/*
+http://www.drewtech.com/support/passthru/stopmsgfilter.html
+Terminate the specified network protocol filter. Once terminated the filter identifier or handle value is invalid.
+*/
+DllExport PassThruStopMsgFilter(unsigned long ChannelID, unsigned long FilterID) {
+	LOGGER.logInfo("DllExport", "PassThruStopMsgFilter called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return channels.remove_filter(ChannelID, FilterID);
+}
+
+/*
+http://www.drewtech.com/support/passthru/setprogramming.html
+Output a programmable voltage on the specified J1962 connector pin.
+Only one pin can have a specified voltage applied at a time. The only exception: it is permissible to
+program pin 15 for SHORT_TO_GROUND, and another pin to a voltage level.
+When switching pins, the user application must disable the first voltage (VOLTAGE_OFF option)
+before enabling the second. The user application protect against applying any incorrect voltage levels.
+A current in excess of 200mA will damage CarDAQ; do not ground the FEPS line while energized, even briefly.
+*/
+DllExport PassThruSetProgrammingVoltage(unsigned long DeviceID, unsigned long PinNumber, unsigned long Voltage) {
+	LOGGER.logInfo("DllExport", "PassThruSetProgrammingVoltage called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/readversion.html
+Retrieve the PassThru device firmware version, the PassThru device DLL version,
+and the version of the J2534 specification that was referenced. The version information is in the form of NULL terminated strings.
+*/
+DllExport PassThruReadVersion(unsigned long DeviceID, char* pFirmwareVersion, char* pDllVersion, char* pApiVersion) {
+	LOGGER.logInfo("DllExport", "passThruReadVersion called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	memcpy(pFirmwareVersion, FIRMWARE_VERSION, sizeof(FIRMWARE_VERSION));
+	memcpy(pDllVersion, DLL_VERSION, sizeof(DLL_VERSION));
+	memcpy(pApiVersion, API_VERSION, sizeof(API_VERSION));
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/getlasterror.html
+Retrieve a text description for the most recent PassThru error as a null terminated C-string. Call this function immediately after an error occurs.
+The error string refers to the most recent function call, rather than a specific DeviceID or ChannelID, and any subsequent function call may clobber the description.
+*/
+DllExport PassThruGetLastError(char* pErrorDescription) {
+	LOGGER.logInfo("DllExport", "PassThruGetLastError called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	if (pErrorDescription == nullptr) {
+		LOGGER.logError("DllExport", "Error description is a null pointer!?");
+		return ERR_NULL_PARAMETER;
+	}
+	memcpy(pErrorDescription, globals::getErrorString().c_str(), globals::getErrorString().size());
+	return STATUS_NOERROR;
+}
+
+/*
+http://www.drewtech.com/support/passthru/ioctl.html
+The PassThruIoctl function is a general purpose I/O control function for modifying the vehicle network interface's characteristics.
+*/
+DllExport PassThruIoctl(unsigned long ChannelID, unsigned long IoctlID, void* pInput, void* pOutput) {
+	LOGGER.logInfo("DllExport", "PassThruIOCTL called");
+	if (!usbcomm::isConnected()) {
+		return ERR_DEVICE_NOT_CONNECTED;
+	}
+	// Test - Just copy voltage
+	if (IoctlID == READ_VBATT) {
+		*(unsigned long*)pOutput = globals::getBatVoltage();
+	}
+	return STATUS_NOERROR;
+}
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#pragma once
+
+#include "pch.h"
+#include "j2534_v0404.h"
+
+#define FIRMWARE_VERSION "0.1.0"
+#define DLL_VERSION "0.1.0"
+#define API_VERSION "04.04"
+
+
+#define DllExport extern "C" long __stdcall
+
+// J2534 Functions
+DllExport PassThruOpen(void* pName, unsigned long* pDeviceID);
+DllExport PassThruClose(unsigned long DeviceID);
+DllExport PassThruConnect(unsigned long DeviceID, unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate, unsigned long* pChannelID);
+DllExport PassThruDisconnect(unsigned long ChannelID);
+DllExport PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+DllExport PassThruWriteMsgs(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+DllExport PassThruStartPeriodicMsg(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pMsgID, unsigned long TimeInterval);
+DllExport PassThruStopPeriodicMsg(unsigned long ChannelID, unsigned long MsgID);
+DllExport PassThruStartMsgFilter(unsigned long ChannelID, unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID);
+DllExport PassThruStopMsgFilter(unsigned long ChannelID, unsigned long FilterID);
+DllExport PassThruSetProgrammingVoltage(unsigned long DeviceID, unsigned long PinNumber, unsigned long Voltage);
+DllExport PassThruReadVersion(unsigned long DeviceID, char* pFirmwareVersion, char* pDllVersion, char* pApiVersion);
+DllExport PassThruGetLastError(char* pErrorDescription);
+DllExport PassThruIoctl(unsigned long ChannelID, unsigned long IoctlID, void* pInput, void* pOutput);
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#include "pch.h"
+#include "channel.h"
+#include "Logger.h"
+#include "globals.h"
+
+
+
+std::tuple<int, unsigned long> channel_group::addChannel(unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate)
+{
+    unsigned long chanid = getFreeChannelID();
+    if (chanid != 0) {
+        channel c = channel(chanid);
+        int res;
+        // Firstly, set protocol
+        res = c.setProtocol(ProtocolID);
+        if (res != STATUS_NOERROR) {
+            LOGGER.logError("CHAN_GROUP", "Error setting channel protocol!");
+            return std::make_tuple(res, 0);
+        }
+        // Then, set channel flags
+        res = c.setFlags(Flags);
+        if (res != STATUS_NOERROR) {
+            LOGGER.logError("CHAN_GROUP", "Error setting channel flags!");
+            return std::make_tuple(res, 0);
+        }
+        // Set channel baud rate
+        res = c.setBaud(Baudrate);
+        if (res != STATUS_NOERROR) {
+            LOGGER.logError("CHAN_GROUP", "Error setting channel baudrate!");
+            return std::make_tuple(res, 0);
+        }
+        // Now channel is setup here, deploy on the Macchina!
+        res = c.setMacchinaChannel();
+        if (res != STATUS_NOERROR) {
+            LOGGER.logError("CHAN_GROUP", "Error deploying channel on macchina!");
+            return std::make_tuple(res, 0);
+        }
+        this->channels.emplace(std::make_pair(chanid, c));
+        LOGGER.logDebug("CHAN_GROUP", "Created channel OK. Id is %lu", chanid);
+    }
+    else {
+        LOGGER.logError("CHAN_GROUP", "Error creating channel!");
+        globals::setErrorString("No more free channels");
+        return std::make_tuple(ERR_FAILED, chanid);
+    }
+    return std::make_tuple(STATUS_NOERROR, chanid);
+}
+
+int channel_group::removeChannel(unsigned long channelid)
+{
+    used[channelid - 1] = false;
+    if (channels.find(channelid) != channels.end()) {
+        int ret = channels.at(channelid).removeChannel();
+        channels.erase(channelid);
+        return ret;
+    }
+    return ERR_INVALID_CHANNEL_ID; // Channel doesn't exist??
+}
+
+void channel_group::recvPayload(PCMSG* m)
+{
+    // We know its channel data coming into this function
+    channel* chan = getChannelWithID(m->args[0]);
+    if (chan == nullptr) {
+        LOGGER.logError("CHAN_RECV", "Cannot send data to requested channel %d (Channel does not exist)", m->args[0]);
+    }
+    else {
+        chan->recvData(&m->args[1], m->arg_size-1); // Arg 0 is the Channel ID
+    }
+}
+
+int channel_group::requestChannelData(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout)
+{
+   channel* chan = getChannelWithID(ChannelID);
+   if (chan == nullptr) {
+       return ERR_INVALID_CHANNEL_ID;
+   }
+   return chan->requestData(pMsg, pNumMsgs, Timeout);
+}
+
+unsigned long channel_group::getFreeChannelID()
+{
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (used[i] == false) { // Channel isn't being used
+            used[i] = true; // Channel is now marked as used
+            return i + 1; // Return +1 to where we are in the array (ID 0 indicates no channel created)
+        }
+    }
+    LOGGER.logError("CHAN_GROUP", "No free channels!");
+    return 0;
+}
+
+int channel_group::setFilter(unsigned long channel_id, unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID)
+{
+    channel* chan = getChannelWithID(channel_id);
+    if (chan == nullptr) {
+        return ERR_INVALID_CHANNEL_ID;
+    }  
+    return chan->setFilter(FilterType, pMaskMsg, pPatternMsg, pFlowControlMsg, pFilterID);
+}
+
+int channel_group::remove_filter(unsigned long channel_id, unsigned long filterID)
+{
+    channel* chan = getChannelWithID(channel_id);
+    if (chan == nullptr) {
+        return ERR_INVALID_CHANNEL_ID;
+    }
+    return chan->remove_filter(filterID);
+}
+
+int channel_group::send_payload(unsigned long channel_id, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long timeout)
+{
+    channel* chan = getChannelWithID(channel_id);
+    if (chan == nullptr) {
+        return ERR_INVALID_CHANNEL_ID;
+    }
+    LOGGER.logInfo("CHAN_SEND", "Sending %lu messages to channel %lu", *pNumMsgs, channel_id);
+    for (unsigned long i = 0; i < *pNumMsgs; i++) {
+        chan->sendPayload(&pMsg[i]);
+    }
+    return STATUS_NOERROR;
+}
+
+channel* channel_group::getChannelWithID(unsigned long id)
+{
+    try {
+        return &this->channels.at(id);
+    }
+    catch (std::exception) {
+        return nullptr;
+    }
+}
+
+channel_group channels = channel_group();
+
+channel::channel(unsigned long id)
+{
+    this->id = id;
+    this->macchinaProtocolID = 0x00;
+}
+
+int channel::setProtocol(unsigned long ProtocolID)
+{
+
+    switch (ProtocolID) {
+    case ISO15765:
+        this->handler = new iso15765_handler(this->id);
+        this->macchinaProtocolID = PROTOCOL_ISO15765;
+        break;
+    case ISO9141:
+        this->handler = new iso9141_handler(this->id);
+        this->macchinaProtocolID = PROTOCOL_ISO9141;
+        break;
+    case CAN:
+        this->handler = new can_handler(this->id);
+        this->macchinaProtocolID = PROTOCOL_CAN;
+        break;
+    default:
+        LOGGER.logError("CHAN_PROT", "Unsupported protocol %lu", ProtocolID);
+        return ERR_INVALID_PROTOCOL_ID;
+    }
+    return STATUS_NOERROR;
+}
+
+int channel::setFlags(unsigned long Flags)
+{
+    if (this->handler == nullptr) {
+        globals::setErrorString("Handler is null");
+        return ERR_FAILED;
+    }
+    this->handler->setFlags(Flags);
+    return STATUS_NOERROR;
+}
+
+int channel::setBaud(unsigned long Baudrate)
+{
+    if (this->handler == nullptr) {
+        globals::setErrorString("Handler is null");
+        return ERR_FAILED;
+    }
+    this->handler->setBaud(Baudrate);
+    return STATUS_NOERROR;
+}
+
+int channel::setMacchinaChannel()
+{
+    // Paylaod args format
+    // 0 - Channel ID
+    // 1 - Protocol ID
+    // 2-6 - Baud rate of channel
+    PCMSG m = {
+        CMD_CHANNEL_CREATE,
+        0,
+        6,
+        (uint8_t)this->id,
+        this->macchinaProtocolID
+    };
+    PCMSG resp = {};
+    unsigned long baud = handler->getBaud();
+    memcpy(&m.args[2], &baud, 4);
+    switch (usbcomm::sendMsgResp(&m, &resp))
+    {
+    case CMD_RES::CMD_OK:
+        return STATUS_NOERROR;
+    case CMD_RES::SEND_FAIL:
+        return ERR_DEVICE_NOT_CONNECTED;
+    case CMD_RES::CMD_TIMEOUT:
+        globals::setErrorString(usbcomm::getLastError());
+        return ERR_FAILED;
+    case CMD_RES::CMD_FAIL:
+        return m.args[1];
+    default:
+        return ERR_FAILED;
+    }
+}
+
+int channel::sendPayload(PASSTHRU_MSG* msg)
+{
+    // Cannot send enough data
+    if (msg->DataSize > 508) {
+        return ERR_BUFFER_FULL;
+    }
+    LOGGER.logDebug("HANDLER", "WRITE --> Contents: %s", LOGGER.bytesToString(msg->Data, msg->DataSize).c_str());
+    PCMSG m = { 0x00 };
+    m.arg_size = msg->DataSize + 1; // +1 for channel ID
+    m.cmd_id = CMD_CHANNEL_DATA; // Sending data
+    m.args[0] = (uint8_t)this->id;
+    memcpy(&m.args[1], msg->Data, msg->DataSize);
+    usbcomm::sendMsg(&m);
+    return 0;
+}
+
+int channel::setFilter(unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID)
+{
+    // Safety test - if filter is 0x03, then pFlowControlMsg must NOT be null as laid out in spec!
+    if (FilterType == FLOW_CONTROL_FILTER && pFlowControlMsg == nullptr) {
+        LOGGER.logError("CHAN_FILT", "Flow control filter wanted but pFlowControlMsg is null!");
+        return ERR_NULL_PARAMETER;
+    }
+
+    // Check if we have avaliable channel filters
+    for (int i = 0; i < CHANNEL_MAX_FILTERS; i++) {
+        if (filters[i] == nullptr) { // Found a free slot, allocate it
+            filters[i] = new handler_filter{ 0x00 };
+
+            // Set filter values
+            filters[i]->id = i+1;
+            *pFilterID = (unsigned long)(i + 1);
+            filters[i]->type = (uint8_t)FilterType;
+            memcpy(&filters[i]->mask, pMaskMsg, sizeof(&pMaskMsg));
+            memcpy(&filters[i]->filter, pPatternMsg, sizeof(&pPatternMsg));
+            if (FilterType == FLOW_CONTROL_FILTER) { // Only copy if flow control (else pFlowControl is nullptr)
+                memcpy(&filters[i]->flow, pFlowControlMsg, sizeof(&pFlowControlMsg));
+            }
+
+            // Construct data to send to Macchina device
+            PCMSG m = { 0x00 };
+            m.cmd_id = CMD_CHANNEL_SET_FILTER;
+            m.arg_size = 15; // 1 for CID, 1 for FID, 1 for FType, 4 for Mask, 4 for pattern, 4 for Flow
+            m.args[0] = this->id; // ID of channel for the filter
+            m.args[1] = filters[i]->id; // Filter ID to set on Macchina
+            m.args[2] = filters[i]->type; // Type of filter
+            // Copy the first 4 the bytes for each filter, the rest we can do in Software later
+            memcpy(&m.args[3], &pMaskMsg->Data[0], 4);
+            memcpy(&m.args[7], &pPatternMsg->Data[0], 4);
+            if (FilterType == FLOW_CONTROL_FILTER) {
+                memcpy(&m.args[11], &pFlowControlMsg->Data[0], 4);
+            }
+            usbcomm::sendMsg(&m);
+            LOGGER.logDebug("CAN_FILT", "Adding filter with ID %lu", *pFilterID);
+            return STATUS_NOERROR;
+        }
+    }
+    // No more free filters
+    LOGGER.logError("CAN_FILT", "Cannot add any more filters - Limit exceeded");
+    return ERR_EXCEEDED_LIMIT;
+}
+
+int channel::remove_filter(unsigned long filterID)
+{
+    // Filter doesn't exit?
+    if (filters[filterID - 1] == nullptr) {
+        LOGGER.logError("CAN_FILT", "Cannot remove filter with ID of %lu, does not exist!", filterID);
+        return ERR_INVALID_MSG_ID;
+    }
+    LOGGER.logDebug("CAN_FILT", "Removing filter with ID %lu", filterID);
+    // Filter exists, remove it
+    delete filters[filterID - 1];
+    filters[filterID - 1] = nullptr;
+    PCMSG m = { 0x00 };
+    m.cmd_id = CMD_CHANNEL_REM_FILTER;
+    m.arg_size = 2; // 1 for CID, 1 for FID
+    m.args[0] = this->id;
+    m.args[1] = filterID;
+    usbcomm::sendMsg(&m);
+    return STATUS_NOERROR;
+}
+
+int channel::removeChannel()
+{
+    PCMSG m = {
+        CMD_CHANNEL_DESTROY,
+        1,
+    };
+    m.args[0] = this->id;
+    // Ensure Macchina removed the channel
+    PCMSG resp = {};
+    switch (usbcomm::sendMsgResp(&m, &resp))
+    {
+    case CMD_RES::CMD_OK:
+        return STATUS_NOERROR;
+    case CMD_RES::SEND_FAIL:
+        return ERR_DEVICE_NOT_CONNECTED;
+    case CMD_RES::CMD_FAIL:
+        LOGGER.logError("CHAN_DEL", "Macchina failed to remove channel");
+        return m.args[1];
+    case CMD_RES::CMD_TIMEOUT:
+        globals::setErrorString(usbcomm::getLastError());
+        return ERR_FAILED;
+    default:
+        LOGGER.logError("CHAN_DEL", "WTF - CMD_RES invalid??");
+        globals::setErrorString("CMD_RES invalid");
+        return ERR_FAILED;
+    }
+}
+
+void channel::recvData(uint8_t* m, uint16_t len)
+{
+    if (this->handler != nullptr) {
+        this->handler->recvData(m, len);
+    }
+}
+
+int channel::requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout)
+{
+    if (this->handler != nullptr) {
+        return this->handler->requestData(pMsg, pNumMsgs, Timeout);
+    }
+    return ERR_FAILED;
+}
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#pragma once
+#include <map>
+#include <queue>
+#include <tuple>
+#include "protocol_handler.h"
+#include "usbcomm.h"
+
+#define CHANNEL_SETTING_BAUD     0x01 // Baud rate change - 32bit unsigned long
+#define CHANNEL_SETTING_FLAGS    0x02 // Flag change - 32bit unsigned long
+#define CHANNEL_SETTING_PROTOCOL 0x03 // Protocol change - 1 byte (see below)
+
+// Protocol identifiers for sending to Macchina
+#define PROTOCOL_ISO15765 0x01
+#define PROTOCOL_CAN      0x02
+#define PROTOCOL_ISO9141  0x03
+
+#define PROTOCOL_FILTER_BLOCK 0x01 // Block filter for channel
+#define PROTOCOL_FILTER_PASS  0x02 // Pass filter for channel
+#define PROTOCOL_FILTER_ISO   0x03 // ISO filter (pass filter + Response ID)
+
+/**
+	Class that holds data about 1 channel
+**/
+
+#define CHANNEL_MAX_FILTERS 10
+
+/// <summary>
+/// Struct for storing filter data
+/// </summary>
+struct handler_filter {
+	uint8_t id; // Unique ID per channel
+	uint8_t type; // Type of filter
+	PASSTHRU_MSG mask; // Mask
+	PASSTHRU_MSG filter; // Filter
+	PASSTHRU_MSG flow; // Flow control CAN ID for ISO15765
+};
+
+class channel
+{
+public:
+	channel(unsigned long id);
+	int setProtocol(unsigned long ProtocolID);
+	int setFlags(unsigned long Flags);
+	int setBaud(unsigned long Baudrate);
+	int setMacchinaChannel(); // Sets the channel up on Macchina
+	int sendPayload(PASSTHRU_MSG* msg);
+	int setFilter(unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID);
+	int remove_filter(unsigned long filterID);
+	int removeChannel();
+	void recvData(uint8_t* m, uint16_t len);
+	int requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+private:
+	protocol_handler* handler = nullptr;
+	uint8_t macchinaProtocolID;
+	handler_filter* filters[CHANNEL_MAX_FILTERS] = { nullptr };
+	unsigned long id;
+};
+
+
+/**
+	Class that holds a group of channels
+**/
+class channel_group {
+#define MAX_CHANNELS 10
+private:
+	std::map<unsigned long, channel> channels;
+	unsigned long getFreeChannelID();
+	bool used[MAX_CHANNELS] = { false };
+public:
+	int setFilter(unsigned long channel_id, unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID);
+	int remove_filter(unsigned long channel_id,  unsigned long filterID);
+	int send_payload(unsigned long channel_id, PASSTHRU_MSG *pMsg, unsigned long* pNumMsgs, unsigned long timeout);
+	channel* getChannelWithID(unsigned long id);
+	std::tuple<int, unsigned long> addChannel(unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate);
+	int removeChannel(unsigned long channelid);
+	void recvPayload(PCMSG* m);
+	int requestChannelData(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+};
+
+extern channel_group channels;
+
+#include "pch.h"
+#include "ioctl_handler.h"
+#include "Logger.h"
+#include "channel.h"
+#include "usbcomm.h"
+#include "globals.h"
+
+int ioctl_handler::set_config(unsigned long channelID, SCONFIG_LIST* pInput)
+{
+    if (pInput == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "SET_CONFIG called for channel %d with %d param(s)", channelID, pInput->NumOfParams);
+    return channels.set_config(channelID, pInput);
+}
+
+int ioctl_handler::get_config(unsigned long channelID, SCONFIG_LIST* pInput)
+{
+    if (pInput == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "GET_CONFIG called for channel %d. Want %d param(s)", channelID, pInput->NumOfParams);
+    return channels.get_config(channelID, pInput);
+}
+
+int ioctl_handler::read_batt(unsigned long* vbatt)
+{
+    if (vbatt == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "READ_VBATT called");
+    PCMSG msg = {
+        CMD_IOCTL_GET,
+        0x01,
+        READ_VBATT
+    };
+    float f;
+    switch (usbcomm::sendMsgResp(&msg, 50)) {
+    case CMD_RES::CMD_OK:
+        *vbatt = (msg.args[1] << 24) & (msg.args[2] << 16) & (msg.args[3] << 8) & msg.args[4];
+        break;
+    default:
+        return ERR_FAILED;
+    }
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::read_prog_voltage(unsigned long* vProg)
+{
+    if (vProg == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "READ_PROGRAMMING_VOLTAGE called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::five_baud_init(unsigned long channelID, SBYTE_ARRAY* pInput, SBYTE_ARRAY* pOutput)
+{
+    if (pInput == nullptr || pOutput == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "FIVE_BAUD_INIT called with %d target ECU addresses", pInput->NumOfBytes);
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::fast_init(unsigned long channelID, PASSTHRU_MSG* pInput, PASSTHRU_MSG* pOutput)
+{
+    if (pInput == nullptr || pOutput == nullptr) { return ERR_NULLPARAMETER; }
+    LOGGER.logDebug("IOCTL", "FAST_INIT called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::clear_tx_buffers(unsigned long channelID)
+{
+    LOGGER.logDebug("IOCTL", "CLEAR_TX_BUFFERS called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::clear_rx_buffers(unsigned long channelID)
+{
+    LOGGER.logDebug("IOCTL", "CLEAR_RX_BUFFERS called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::clear_periodic_msgs(unsigned long channelID)
+{
+    LOGGER.logDebug("IOCTL", "CLEAR_PERIODIC_MSGS called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::clear_msg_filters(unsigned long channelID)
+{
+    LOGGER.logDebug("IOCTL", "CLEAR_MSG_FILTERS called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::clear_mlt(unsigned long channelID)
+{
+    LOGGER.logDebug("IOCTL", "CLEAR_FUNCT_MSG_LOOKUP_TABLE called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::add_to_mlt(unsigned long channelID, SBYTE_ARRAY* pInput)
+{
+    LOGGER.logDebug("IOCTL", "ADD_TO_FUNCT_MSG_LOOKUP_TABLE called");
+    return STATUS_NOERROR;
+}
+
+int ioctl_handler::del_from_mlt(unsigned long channelID, SBYTE_ARRAY* pInput)
+{
+    LOGGER.logDebug("IOCTL", "DELETE_FROM_FUNCT_MSG_LOOKUP_TABLE called");
+    return STATUS_NOERROR;
+}
+#pragma once
+
+#ifndef IOCTL_H_
+#define IOCTL_H_
+
+#include "j2534_v0404.h"
+
+namespace ioctl_handler
+{
+	int set_config(unsigned long channelID, SCONFIG_LIST* pInput);
+	int get_config(unsigned long channelID, SCONFIG_LIST* pInput);
+	int read_batt(unsigned long* vbatt);
+	int read_prog_voltage(unsigned long* vProg);
+	int five_baud_init(unsigned long channelID, SBYTE_ARRAY* pInput, SBYTE_ARRAY* pOutput);
+	int fast_init(unsigned long channelID, PASSTHRU_MSG* pInput, PASSTHRU_MSG* pOutput);
+	int clear_tx_buffers(unsigned long channelID);
+	int clear_rx_buffers(unsigned long channelID);
+	int clear_periodic_msgs(unsigned long channelID);
+	int clear_msg_filters(unsigned long channelID);
+	int clear_mlt(unsigned long channelID);
+	int add_to_mlt(unsigned long channelID, SBYTE_ARRAY* pInput);
+	int del_from_mlt(unsigned long channelID, SBYTE_ARRAY* pInput);
+
+};
+
+#endif
+
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#include "pch.h"
+#include "protocol_handler.h"
+#include "Logger.h"
+#include "usbcomm.h"
+
+protocol_handler::protocol_handler(unsigned long channelID)
+{
+	this->channelid = channelID;
+	this->baud = 0;
+	this->flags = 0;
+}
+
+void protocol_handler::setFlags(unsigned long flags)
+{
+	this->flags = flags;
+}
+
+void protocol_handler::setBaud(unsigned long baud)
+{
+	this->baud = baud;
+}
+
+unsigned long protocol_handler::getBaud()
+{
+	return this->baud;
+}
+
+int protocol_handler::requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout)
+{
+	if (this->msg_queue.size() == 0) { // Sorry, nothing here to read
+		return ERR_BUFFER_EMPTY;
+	}
+	// TODO handle timeout
+	unsigned long max_read = min(*pNumMsgs, msg_queue.size()); // Calculate how many messages we can read at most
+	*pNumMsgs = max_read; // Let the req application know how many messages we read
+	for (unsigned long i = 0; i < max_read; i++) {
+		memcpy(&pMsg[i], &this->msg_queue.front(), sizeof(PASSTHRU_MSG));
+		LOGGER.logDebug("HANDLER", "READ <-- Contents: %s", LOGGER.bytesToString(pMsg[i].Data, pMsg[i].DataSize).c_str());
+		// Now pop the queue
+		this->msg_queue.pop();
+	}
+	return STATUS_NOERROR;
+}
+
+iso9141_handler::iso9141_handler(unsigned long channelID) : protocol_handler(channelID)
+{
+	LOGGER.logDebug("ISO9141", "Handler created");
+}
+
+void iso9141_handler::recvData(uint8_t* m, uint16_t len)
+{
+	PASSTHRU_MSG rx = {};
+	rx.ProtocolID = ISO9141;
+	this->msg_queue.push(rx);
+}
+
+iso15765_handler::iso15765_handler(unsigned long channelID) : protocol_handler(channelID)
+{
+	LOGGER.logDebug("ISO15765", "Handler created");
+}
+
+void iso15765_handler::recvData(uint8_t* m, uint16_t len)
+{
+	// Now convert the data packet into a PASSTHRU_MSG
+	PASSTHRU_MSG rx = { 0x00 };
+	rx.ProtocolID = ISO15765;
+	if (m[0] == 0xFF) { // Special indicator saying its a FIRST FF Indication
+		LOGGER.logDebug("ISO15765", "First frame indication!");
+		rx.DataSize = 4;
+		rx.RxStatus = ISO15765_FIRST_FRAME; // Set this! Need to know ECU has started to send data
+		memcpy(&rx.Data, &m[1], 4);
+		this->msg_queue.push(rx);
+	}
+	else if (m[0] == 0xAA && len == 1) { // Speical message saying Tx Complete
+		LOGGER.logInfo("ISO15765", "MFP Tx Complete!");
+		rx.DataSize = 0;
+		rx.RxStatus = TX_MSG_TYPE; // Transfer complete
+		this->msg_queue.push(rx);
+	} else {
+		LOGGER.logDebug("ISO15765", "Normal payload!");
+		// Add the message to the queue
+		rx.DataSize = len;
+
+		// What the hell. Below breaks Vediamo/DAS, even though its part of the spec!?
+		//if (len > 11) { // Only set TX_MSG_TYPE if it was a multi frame payload
+		//	rx.RxStatus = TX_MSG_TYPE;
+		//}
+		memcpy(&rx.Data, m, len);
+		this->msg_queue.push(rx);
+	}
+}
+
+can_handler::can_handler(unsigned long channelID) : protocol_handler(channelID)
+{
+	LOGGER.logDebug("CAN", "Handler created");
+}
+
+void can_handler::recvData(uint8_t* m, uint16_t len)
+{
+	PASSTHRU_MSG rx = { 0x00 };
+	// Add the message to the queue
+	rx.DataSize = len;
+	rx.ProtocolID = CAN;
+	memcpy(&rx.Data, m, len);
+	this->msg_queue.push(rx);
+}
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#pragma once
+#include <queue>
+#include "j2534_v0404.h"
+
+class protocol_handler
+{
+public:
+	explicit protocol_handler(unsigned long channelID);
+	void setFlags(unsigned long flags);
+	void setBaud(unsigned long baud);
+	unsigned long getBaud();
+	virtual void recvData(uint8_t* m, uint16_t len) = 0;
+	int requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+protected:
+	std::queue<PASSTHRU_MSG> msg_queue;
+	unsigned long baud;
+	unsigned long flags;
+	unsigned long channelid;
+};
+
+class iso9141_handler : public protocol_handler {
+public:
+	iso9141_handler(unsigned long channelID);
+	void recvData(uint8_t* m, uint16_t len);
+};
+
+class iso15765_handler : public protocol_handler {
+public:
+	iso15765_handler(unsigned long channelID);
+	void recvData(uint8_t* m, uint16_t len);
+};
+
+class can_handler : public protocol_handler {
+public:
+	can_handler(unsigned long channelID);
+	void recvData(uint8_t* m, uint16_t len);
+};
+
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#include "pch.h"
+#include "globals.h"
+
+namespace globals {
+	unsigned long BAT_VOLTAGE = 12000; // 12.0 V as default - macchina will update on ping
+	std::string lastErrorMsg = "NO ERROR";
+
+	void setBatVoltage(unsigned long v)
+	{
+		BAT_VOLTAGE = v;
+	}
+
+	unsigned long getBatVoltage()
+	{
+		return BAT_VOLTAGE;
+	}
+	void setErrorString(std::string error)
+	{
+		lastErrorMsg = error;
+	}
+	void setErrorString(const char* error)
+	{
+		lastErrorMsg.assign(error, strlen(error));
+	}
+	std::string getErrorString()
+	{
+		return lastErrorMsg;
+	}
+}
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#pragma once
+
+#include <stdint.h>
+#include <string>
+
+#ifndef GLOBALS_H_
+#define GLOBALS_H_
+
+// Contains values that are updated at a ping request to the macchina
+namespace globals
+{
+	void setBatVoltage(unsigned long v);
+	unsigned long getBatVoltage();
+	void setErrorString(std::string error);
+	void setErrorString(const char* error);
+	std::string getErrorString();
+};
+
+#endif
+
+/*
+**
+** Copyright (C) 2020 Ashcon Mohseninia
+** Author: Ashcon Mohseninia <ashcon50@gmail.com>
+**
+** This library is free software; you can redistribute it and/or modify
+** it under the terms of the GNU Lesser General Public License as published
+** by the Free Software Foundation, either version 3 of the License, or (at
+** your option) any later version.
+**
+** This library is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+** Lesser General Public License for more details.
+**
+** You should have received a copy of the GNU Lesser General Public
+** License along with this library; if not, <http://www.gnu.org/licenses/>.
+**
+*/
+
+#include "pch.h"
+#include "Logger.h"
+#include "commserver.h"
+#include "macchina-passthru.h"
+
+bool startup() {
+    LOGGER.writeToFile("\n\n##RESTART##\n");
+    return commserver::CreateCommThread();
+}
+
+void close() {
+    commserver::CloseCommThread();
+}
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+                       DWORD  ul_reason_for_call,
+                       LPVOID lpReserved
+                     )
+{   
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+        LOGGER.logDebug("APIENTRY", "Process attached");
+        if (!startup()) {
+            return FALSE;
+        }
+        break;
+    case DLL_THREAD_ATTACH:
+        break;
+    case DLL_THREAD_DETACH:
+        break;
+    case DLL_PROCESS_DETACH:
+        LOGGER.logDebug("APIENTRY", "Process detached");
+        close();
+        break;
+    }
+    return TRUE;
+}
+
