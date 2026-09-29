@@ -1,0 +1,285 @@
+Sí. Basándome en `source.txt`, la separación quedaría así:
+
+## 🗑️ ELIMINAR
+
+### `usbcomm.cpp / usbcomm.h`
+
+* `usbcomm::connect()`
+* `usbcomm::disconnect()`
+* `usbcomm::isConnected()`
+* `usbcomm::sendMsg()`
+* `usbcomm::sendMsgResp()`
+* `usbcomm::pollMessage()`
+* Toda la comunicación COM/USB específica de Macchina.
+
+### `commserver.cpp / commserver.h`
+
+* `commserver::CreateCommThread()`
+* `commserver::CloseCommThread()`
+* Hilo de comunicación/polling asociado a `usbcomm`.
+
+### `dllmain.cpp`
+
+* `startup()`
+* `close()`
+* La llamada a `commserver::CreateCommThread()`.
+* La llamada a `commserver::CloseCommThread()`.
+
+---
+
+# ✏️ MODIFICAR
+
+### `macchina-passthru.cpp`
+
+Modificar:
+
+* `PassThruOpen()`
+
+  * → llamar a `VCI_Open()`.
+
+* `PassThruClose()`
+
+  * → llamar a `VCI_Close()`.
+
+* `PassThruConnect()`
+
+  * → eliminar `usbcomm::isConnected()`.
+  * → mantener creación del `channel`.
+  * → el canal terminará llamando a `VCI_Connect()`.
+
+* `PassThruDisconnect()`
+
+  * → eliminar `usbcomm::isConnected()`.
+  * → delegar en `channel`.
+
+* `PassThruReadMsgs()`
+
+  * → eliminar dependencia directa de `usbcomm`.
+  * → recibir mediante `channel → protocol_handler → VCI`.
+
+* `PassThruWriteMsgs()`
+
+  * → eliminar dependencia directa de `usbcomm`.
+  * → enviar mediante `channel → VCI`.
+
+* `PassThruStartPeriodicMsg()`
+
+  * → mantener como API J2534, pero eliminar cualquier dependencia de hardware Macchina.
+
+* `PassThruStopPeriodicMsg()`
+
+  * → igual.
+
+* `PassThruStartMsgFilter()`
+
+  * → eliminar dependencia de `usbcomm`.
+  * → delegar en `channel`.
+
+* `PassThruStopMsgFilter()`
+
+  * → igual.
+
+* `PassThruSetProgrammingVoltage()`
+
+  * → pasar a `VCI_SetProgrammingVoltage()`.
+
+* `PassThruReadVersion()`
+
+  * → mantener, eliminando cualquier dependencia Macchina si la hubiera.
+
+* `PassThruGetLastError()`
+
+  * → mantener, aunque conviene corregir después la copia del `\0`.
+
+* `PassThruIoctl()`
+
+  * → sustituir acceso directo a hardware por `VCI_Ioctl()`.
+
+---
+
+### `channel.cpp`
+
+Modificar:
+
+* `channel::setMacchinaChannel()`
+
+  * **Eliminarlo/reemplazarlo por `channel::connectVCI()`**.
+  * Ya no debe construir `PCMSG CMD_CHANNEL_CREATE`.
+  * Debe llamar a `VCI_Connect()`.
+
+* `channel::sendPayload()`
+
+  * eliminar `PCMSG CMD_CHANNEL_DATA`.
+  * llamar a `VCI_Send()`.
+
+* `channel::setFilter()`
+
+  * eliminar `PCMSG CMD_CHANNEL_SET_FILTER`.
+  * mantener inicialmente el filtro en software.
+  * opcionalmente llamar posteriormente a `VCI_StartFilter()`.
+
+* `channel::remove_filter()`
+
+  * eliminar `PCMSG CMD_CHANNEL_REM_FILTER`.
+  * gestionar el filtro localmente / `VCI_StopFilter()`.
+
+* `channel::removeChannel()`
+
+  * eliminar `CMD_CHANNEL_DESTROY`.
+  * llamar a `VCI_Disconnect()`.
+
+* Cualquier uso restante de:
+
+  * `usbcomm::sendMsg()`
+  * `usbcomm::sendMsgResp()`
+  * `usbcomm::isConnected()`.
+
+### `channel.h`
+
+Modificar:
+
+* `setMacchinaChannel()`
+
+  * sustituir por la nueva función de conexión VCI.
+
+* Dependencias de `usbcomm.h`.
+
+  * eliminarlas.
+
+---
+
+### `protocol_handler.cpp`
+
+Modificar posteriormente:
+
+* `iso15765_handler::recvData()`
+
+  * eliminar la dependencia de los indicadores especiales Macchina `0xFF` / `0xAA`.
+* `iso9141_handler::recvData()`
+
+  * implementar recepción real desde el nuevo formato VCI.
+* `requestData()`
+
+  * posteriormente implementar correctamente `Timeout`.
+
+**En la primera fase no hace falta rehacerlos completamente**, solo desacoplarlos de la representación Macchina.
+
+---
+
+### `protocol_handler.h`
+
+Modificar la interfaz si necesitamos que los handlers reciban el nuevo formato de datos procedente de `VCI`.
+
+---
+
+### `ioctl_handler.cpp`
+
+Modificar:
+
+* `read_batt()`
+
+  * eliminar `usbcomm::sendMsgResp()`.
+  * → `VCI_Ioctl()` / `VCI_ReadBattery()`.
+
+* `read_prog_voltage()`
+
+  * → `VCI_SetProgrammingVoltage()` cuando corresponda.
+
+* funciones de IOCTL actualmente vacías:
+
+  * decidir cuáles delegan en VCI y cuáles quedan como `ERR_NOT_SUPPORTED`.
+
+Además, hay que revisar el problema existente de `channel_group::set_config/get_config`, que aparece utilizado pero no declarado en el `channel.h` proporcionado.
+
+---
+
+### `globals.cpp / globals.h`
+
+Modificar únicamente si hace falta para que:
+
+* estado de conexión;
+* tensión de batería;
+* último error
+
+se alimenten desde VCI y no desde Macchina.
+
+---
+
+# 🆕 CREAR
+
+### `vci.h`
+
+Nueva abstracción de hardware:
+
+```text
+VCI_Open()
+VCI_Close()
+
+VCI_Connect()
+VCI_Disconnect()
+
+VCI_Send()
+VCI_Receive()
+
+VCI_StartFilter()
+VCI_StopFilter()
+
+VCI_SetProgrammingVoltage()
+
+VCI_Ioctl()
+```
+
+Por ahora serán **stubs**, sin USB, Arduino, CAN ni K-Line.
+
+---
+
+### `vci.cpp`
+
+Implementación de esos `VCI_*`.
+
+En esta fase:
+
+```text
+VCI_Open()       → cambia estado a abierto
+VCI_Close()      → cambia estado a cerrado
+
+VCI_Connect()    → registra protocolo/baudrate y devuelve OK
+VCI_Disconnect() → libera conexión
+
+VCI_Send()       → registra/descarta el mensaje
+VCI_Receive()    → devuelve ERR_BUFFER_EMPTY
+
+VCI_StartFilter() → stub
+VCI_StopFilter()  → stub
+
+VCI_SetProgrammingVoltage() → stub
+VCI_Ioctl()       → stub
+```
+
+Así podemos probar **toda la cadena J2534 sin tener todavía el Arduino**.
+
+---
+
+## 📌 Resumen por archivo
+
+| Archivo                   | Acción                  |
+| ------------------------- | ----------------------- |
+| `macchina-passthru.cpp`   | ✏️ Modificar            |
+| `macchina-passthru.h`     | 🟢 Mantener             |
+| `channel.cpp`             | ✏️ Modificar            |
+| `channel.h`               | ✏️ Modificar            |
+| `protocol_handler.cpp`    | ✏️ Modificar después    |
+| `protocol_handler.h`      | ✏️ Modificar después    |
+| `ioctl_handler.cpp`       | ✏️ Modificar            |
+| `ioctl_handler.h`         | 🟢 Mantener             |
+| `globals.cpp/.h`          | ✏️ Ajustar si necesario |
+| `j2534_v0404.h`           | 🟢 Mantener             |
+| `Logger.cpp/.h`           | 🟢 Mantener             |
+| `macchina-passthru.def`   | 🟢 Mantener             |
+| `macchina-passthru_dll.h` | 🟢 Mantener             |
+| `usbcomm.cpp/.h`          | 🗑️ Eliminar            |
+| `commserver.cpp/.h`       | 🗑️ Eliminar            |
+| `dllmain.cpp`             | ✏️ Simplificar          |
+| `vci.cpp/.h`              | 🆕 Crear                |
+
+Y **`dpdu-passthru` no se toca en absoluto**.
