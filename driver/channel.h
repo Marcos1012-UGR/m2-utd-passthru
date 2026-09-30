@@ -23,20 +23,7 @@
 #include <queue>
 #include <tuple>
 #include "protocol_handler.h"
-#include "usbcomm.h"
-
-#define CHANNEL_SETTING_BAUD     0x01 // Baud rate change - 32bit unsigned long
-#define CHANNEL_SETTING_FLAGS    0x02 // Flag change - 32bit unsigned long
-#define CHANNEL_SETTING_PROTOCOL 0x03 // Protocol change - 1 byte (see below)
-
-// Protocol identifiers for sending to Macchina
-#define PROTOCOL_ISO15765 0x01
-#define PROTOCOL_CAN      0x02
-#define PROTOCOL_ISO9141  0x03
-
-#define PROTOCOL_FILTER_BLOCK 0x01 // Block filter for channel
-#define PROTOCOL_FILTER_PASS  0x02 // Pass filter for channel
-#define PROTOCOL_FILTER_ISO   0x03 // ISO filter (pass filter + Response ID)
+#include "vci.h"
 
 /**
 	Class that holds data about 1 channel
@@ -58,22 +45,42 @@ struct handler_filter {
 class channel
 {
 public:
-	channel(unsigned long id);
-	int setProtocol(unsigned long ProtocolID);
-	int setFlags(unsigned long Flags);
-	int setBaud(unsigned long Baudrate);
-	int setMacchinaChannel(); // Sets the channel up on Macchina
-	int sendPayload(PASSTHRU_MSG* msg);
-	int setFilter(unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID);
-	int remove_filter(unsigned long filterID);
-	int removeChannel();
-	void recvData(uint8_t* m, uint16_t len);
-	int requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
+    channel(unsigned long id);
+
+    int setProtocol(unsigned long ProtocolID);
+    int setFlags(unsigned long Flags);
+    int setBaud(unsigned long Baudrate);
+    int connectVCI();
+
+    int sendPayload(PASSTHRU_MSG* msg);
+
+    int setFilter(
+        unsigned long FilterType,
+        PASSTHRU_MSG* pMaskMsg,
+        PASSTHRU_MSG* pPatternMsg,
+        PASSTHRU_MSG* pFlowControlMsg,
+        unsigned long* pFilterID
+    );
+
+    int remove_filter(unsigned long filterID);
+    int removeChannel();
+
+    void recvData(uint8_t* m, uint16_t len);
+
+    int requestData(
+        PASSTHRU_MSG* pMsg,
+        unsigned long* pNumMsgs,
+        unsigned long Timeout
+    );
+
 private:
-	protocol_handler* handler = nullptr;
-	uint8_t macchinaProtocolID;
-	handler_filter* filters[CHANNEL_MAX_FILTERS] = { nullptr };
-	unsigned long id;
+    protocol_handler* handler = nullptr;
+    handler_filter* filters[CHANNEL_MAX_FILTERS] = { nullptr };
+
+    unsigned long id;
+    unsigned long protocolID = 0;
+    unsigned long flags = 0;
+    unsigned long baudrate = 0;
 };
 
 
@@ -93,7 +100,7 @@ public:
 	channel* getChannelWithID(unsigned long id);
 	std::tuple<int, unsigned long> addChannel(unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate);
 	int removeChannel(unsigned long channelid);
-	void recvPayload(PCMSG* m);
+	void recvPayload(char * data);
 	int requestChannelData(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout);
 };
 

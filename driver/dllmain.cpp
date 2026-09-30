@@ -20,40 +20,27 @@
 
 #include "pch.h"
 #include "Logger.h"
-#include "commserver.h"
-#include "macchina-passthru.h"
+#include "nyanko-passthru.h"
 
-bool startup() {
+bool startup()
+{
     LOGGER.writeToFile("\n\n##RESTART##\n");
-    return commserver::CreateCommThread();
+    return true;
 }
 
-void close() {
-    commserver::CloseCommThread();
-}
+void close()
+{}
 
-BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
-{   
-    switch (ul_reason_for_call)
+BOOL APIENTRY DllMain(
+    HMODULE hModule,
+    DWORD ul_reason_for_call,
+    LPVOID lpReserved
+)
+{
+    if (ul_reason_for_call == DLL_PROCESS_ATTACH)
     {
-    case DLL_PROCESS_ATTACH:
-        LOGGER.logDebug("APIENTRY", "Process attached");
-        if (!startup()) {
-            return FALSE;
-        }
-        break;
-    case DLL_THREAD_ATTACH:
-        break;
-    case DLL_THREAD_DETACH:
-        break;
-    case DLL_PROCESS_DETACH:
-        LOGGER.logDebug("APIENTRY", "Process detached");
-        close();
-        break;
+        LOGGER.logInfo("DLLMAIN", "NYANKO DLL LOADED");
     }
+
     return TRUE;
 }
-

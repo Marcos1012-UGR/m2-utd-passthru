@@ -21,7 +21,6 @@
 #include "pch.h"
 #include "protocol_handler.h"
 #include "Logger.h"
-#include "usbcomm.h"
 
 protocol_handler::protocol_handler(unsigned long channelID)
 {

@@ -18,6 +18,7 @@
 **
 */
 
+#include "vci.h"
 #include "pch.h"
 #include "channel.h"
 #include "Logger.h"
@@ -25,68 +26,127 @@
 
 
 
-std::tuple<int, unsigned long> channel_group::addChannel(unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate)
+std::tuple<int, unsigned long> channel_group::addChannel(
+    unsigned long ProtocolID,
+    unsigned long Flags,
+    unsigned long Baudrate)
 {
     unsigned long chanid = getFreeChannelID();
-    if (chanid != 0) {
-        channel c = channel(chanid);
-        int res;
-        // Firstly, set protocol
-        res = c.setProtocol(ProtocolID);
-        if (res != STATUS_NOERROR) {
-            LOGGER.logError("CHAN_GROUP", "Error setting channel protocol!");
-            return std::make_tuple(res, 0);
-        }
-        // Then, set channel flags
-        res = c.setFlags(Flags);
-        if (res != STATUS_NOERROR) {
-            LOGGER.logError("CHAN_GROUP", "Error setting channel flags!");
-            return std::make_tuple(res, 0);
-        }
-        // Set channel baud rate
-        res = c.setBaud(Baudrate);
-        if (res != STATUS_NOERROR) {
-            LOGGER.logError("CHAN_GROUP", "Error setting channel baudrate!");
-            return std::make_tuple(res, 0);
-        }
-        // Now channel is setup here, deploy on the Macchina!
-        res = c.setMacchinaChannel();
-        if (res != STATUS_NOERROR) {
-            LOGGER.logError("CHAN_GROUP", "Error deploying channel on macchina!");
-            return std::make_tuple(res, 0);
-        }
-        this->channels.emplace(std::make_pair(chanid, c));
-        LOGGER.logDebug("CHAN_GROUP", "Created channel OK. Id is %lu", chanid);
-    }
-    else {
+
+    if (chanid == 0) {
         LOGGER.logError("CHAN_GROUP", "Error creating channel!");
         globals::setErrorString("No more free channels");
-        return std::make_tuple(ERR_FAILED, chanid);
+        return std::make_tuple(ERR_FAILED, 0);
     }
+
+    channel c(chanid);
+
+    int res = c.setProtocol(ProtocolID);
+    if (res != STATUS_NOERROR) {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "Error setting channel protocol!"
+        );
+        used[chanid - 1] = false;
+        return std::make_tuple(res, 0);
+    }
+
+    res = c.setFlags(Flags);
+    if (res != STATUS_NOERROR) {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "Error setting channel flags!"
+        );
+        used[chanid - 1] = false;
+        return std::make_tuple(res, 0);
+    }
+
+    res = c.setBaud(Baudrate);
+    if (res != STATUS_NOERROR) {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "Error setting channel baudrate!"
+        );
+        used[chanid - 1] = false;
+        return std::make_tuple(res, 0);
+    }
+
+    res = c.connectVCI();
+    if (res != STATUS_NOERROR) {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "Error connecting channel to VCI!"
+        );
+        used[chanid - 1] = false;
+        return std::make_tuple(res, 0);
+    }
+
+    this->channels.emplace(std::make_pair(chanid, c));
+
+    LOGGER.logDebug(
+        "CHAN_GROUP",
+        "Created channel OK. Id is %lu",
+        chanid
+    );
+
     return std::make_tuple(STATUS_NOERROR, chanid);
 }
 
 int channel_group::removeChannel(unsigned long channelid)
 {
-    used[channelid - 1] = false;
-    if (channels.find(channelid) != channels.end()) {
-        int ret = channels.at(channelid).removeChannel();
-        channels.erase(channelid);
+    if (channelid == 0 || channelid > MAX_CHANNELS)
+    {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "Invalid channel ID %lu",
+            channelid
+        );
+
+        return ERR_INVALID_CHANNEL_ID;
+    }
+
+    auto it = channels.find(channelid);
+
+    if (it == channels.end())
+    {
+        LOGGER.logDebug(
+            "CHAN_GROUP",
+            "Channel %lu does not exist",
+            channelid
+        );
+
+        return ERR_INVALID_CHANNEL_ID;
+    }
+
+    int ret = it->second.removeChannel();
+
+    if (ret != STATUS_NOERROR)
+    {
+        LOGGER.logError(
+            "CHAN_GROUP",
+            "VCI_Disconnect failed for channel %lu: %d",
+            channelid,
+            ret
+        );
+
         return ret;
     }
-    return ERR_INVALID_CHANNEL_ID; // Channel doesn't exist??
+
+    channels.erase(it);
+    used[channelid - 1] = false;
+
+    LOGGER.logDebug(
+        "CHAN_GROUP",
+        "Channel %lu removed",
+        channelid
+    );
+
+    return STATUS_NOERROR;
 }
 
-void channel_group::recvPayload(PCMSG* m)
+void channel_group::recvPayload(char * data)
 {
-    // We know its channel data coming into this function
-    channel* chan = getChannelWithID(m->args[0]);
-    if (chan == nullptr) {
-        LOGGER.logError("CHAN_RECV", "Cannot send data to requested channel %d (Channel does not exist)", m->args[0]);
-    }
-    else {
-        chan->recvData(&m->args[1], m->arg_size-1); // Arg 0 is the Channel ID
-    }
+    
 }
 
 int channel_group::requestChannelData(unsigned long ChannelID, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout)
@@ -128,16 +188,42 @@ int channel_group::remove_filter(unsigned long channel_id, unsigned long filterI
     return chan->remove_filter(filterID);
 }
 
-int channel_group::send_payload(unsigned long channel_id, PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long timeout)
+int channel_group::send_payload(
+    unsigned long channel_id,
+    PASSTHRU_MSG* pMsg,
+    unsigned long* pNumMsgs,
+    unsigned long timeout)
 {
     channel* chan = getChannelWithID(channel_id);
+
     if (chan == nullptr) {
         return ERR_INVALID_CHANNEL_ID;
     }
-    LOGGER.logInfo("CHAN_SEND", "Sending %lu messages to channel %lu", *pNumMsgs, channel_id);
-    for (unsigned long i = 0; i < *pNumMsgs; i++) {
-        chan->sendPayload(&pMsg[i]);
+
+    if (pMsg == nullptr || pNumMsgs == nullptr) {
+        return ERR_NULL_PARAMETER;
     }
+
+    LOGGER.logInfo(
+        "CHAN_SEND",
+        "Sending %lu messages to channel %lu",
+        *pNumMsgs,
+        channel_id
+    );
+
+    for (unsigned long i = 0; i < *pNumMsgs; i++) {
+        int result = VCI_Send(
+            channel_id,
+            &pMsg[i],
+            1,
+            timeout
+        );
+
+        if (result != STATUS_NOERROR) {
+            return result;
+        }
+    }
+
     return STATUS_NOERROR;
 }
 
@@ -156,29 +242,34 @@ channel_group channels = channel_group();
 channel::channel(unsigned long id)
 {
     this->id = id;
-    this->macchinaProtocolID = 0x00;
 }
 
 int channel::setProtocol(unsigned long ProtocolID)
 {
-
     switch (ProtocolID) {
     case ISO15765:
         this->handler = new iso15765_handler(this->id);
-        this->macchinaProtocolID = PROTOCOL_ISO15765;
         break;
+
     case ISO9141:
         this->handler = new iso9141_handler(this->id);
-        this->macchinaProtocolID = PROTOCOL_ISO9141;
         break;
+
     case CAN:
         this->handler = new can_handler(this->id);
-        this->macchinaProtocolID = PROTOCOL_CAN;
         break;
+
     default:
-        LOGGER.logError("CHAN_PROT", "Unsupported protocol %lu", ProtocolID);
+        LOGGER.logError(
+            "CHAN_PROT",
+            "Unsupported protocol %lu",
+            ProtocolID
+        );
         return ERR_INVALID_PROTOCOL_ID;
     }
+
+    this->protocolID = ProtocolID;
+
     return STATUS_NOERROR;
 }
 
@@ -188,7 +279,10 @@ int channel::setFlags(unsigned long Flags)
         globals::setErrorString("Handler is null");
         return ERR_FAILED;
     }
+
+    this->flags = Flags;
     this->handler->setFlags(Flags);
+
     return STATUS_NOERROR;
 }
 
@@ -198,150 +292,74 @@ int channel::setBaud(unsigned long Baudrate)
         globals::setErrorString("Handler is null");
         return ERR_FAILED;
     }
+
+    this->baudrate = Baudrate;
     this->handler->setBaud(Baudrate);
+
     return STATUS_NOERROR;
 }
 
-int channel::setMacchinaChannel()
+int channel::connectVCI()
 {
-    // Paylaod args format
-    // 0 - Channel ID
-    // 1 - Protocol ID
-    // 2-6 - Baud rate of channel
-    PCMSG m = {
-        CMD_CHANNEL_CREATE,
-        0,
-        6,
-        (uint8_t)this->id,
-        this->macchinaProtocolID
-    };
-    PCMSG resp = {};
-    unsigned long baud = handler->getBaud();
-    memcpy(&m.args[2], &baud, 4);
-    switch (usbcomm::sendMsgResp(&m, &resp))
-    {
-    case CMD_RES::CMD_OK:
-        return STATUS_NOERROR;
-    case CMD_RES::SEND_FAIL:
-        return ERR_DEVICE_NOT_CONNECTED;
-    case CMD_RES::CMD_TIMEOUT:
-        globals::setErrorString(usbcomm::getLastError());
-        return ERR_FAILED;
-    case CMD_RES::CMD_FAIL:
-        return m.args[1];
-    default:
+    if (this->handler == nullptr) {
+        globals::setErrorString("Handler is null");
         return ERR_FAILED;
     }
+
+    return VCI_Connect(
+        this->id,
+        this->protocolID,
+        this->flags,
+        this->baudrate
+    );
 }
 
 int channel::sendPayload(PASSTHRU_MSG* msg)
 {
-    // Cannot send enough data
-    if (msg->DataSize > 508) {
-        return ERR_BUFFER_FULL;
-    }
-    LOGGER.logDebug("HANDLER", "WRITE --> Contents: %s", LOGGER.bytesToString(msg->Data, msg->DataSize).c_str());
-    PCMSG m = { 0x00 };
-    m.arg_size = msg->DataSize + 1; // +1 for channel ID
-    m.cmd_id = CMD_CHANNEL_DATA; // Sending data
-    m.args[0] = (uint8_t)this->id;
-    memcpy(&m.args[1], msg->Data, msg->DataSize);
-    usbcomm::sendMsg(&m);
-    return 0;
-}
-
-int channel::setFilter(unsigned long FilterType, PASSTHRU_MSG* pMaskMsg, PASSTHRU_MSG* pPatternMsg, PASSTHRU_MSG* pFlowControlMsg, unsigned long* pFilterID)
-{
-    // Safety test - if filter is 0x03, then pFlowControlMsg must NOT be null as laid out in spec!
-    if (FilterType == FLOW_CONTROL_FILTER && pFlowControlMsg == nullptr) {
-        LOGGER.logError("CHAN_FILT", "Flow control filter wanted but pFlowControlMsg is null!");
+    if (msg == nullptr) {
         return ERR_NULL_PARAMETER;
     }
 
-    // Check if we have avaliable channel filters
-    for (int i = 0; i < CHANNEL_MAX_FILTERS; i++) {
-        if (filters[i] == nullptr) { // Found a free slot, allocate it
-            filters[i] = new handler_filter{ 0x00 };
+    return VCI_Send(
+        this->id,
+        msg,
+        1,
+        0
+    );
+}
 
-            // Set filter values
-            filters[i]->id = i+1;
-            *pFilterID = (unsigned long)(i + 1);
-            filters[i]->type = (uint8_t)FilterType;
-            memcpy(&filters[i]->mask, pMaskMsg, sizeof(&pMaskMsg));
-            memcpy(&filters[i]->filter, pPatternMsg, sizeof(&pPatternMsg));
-            if (FilterType == FLOW_CONTROL_FILTER) { // Only copy if flow control (else pFlowControl is nullptr)
-                memcpy(&filters[i]->flow, pFlowControlMsg, sizeof(&pFlowControlMsg));
-            }
-
-            // Construct data to send to Macchina device
-            PCMSG m = { 0x00 };
-            m.cmd_id = CMD_CHANNEL_SET_FILTER;
-            m.arg_size = 15; // 1 for CID, 1 for FID, 1 for FType, 4 for Mask, 4 for pattern, 4 for Flow
-            m.args[0] = this->id; // ID of channel for the filter
-            m.args[1] = filters[i]->id; // Filter ID to set on Macchina
-            m.args[2] = filters[i]->type; // Type of filter
-            // Copy the first 4 the bytes for each filter, the rest we can do in Software later
-            memcpy(&m.args[3], &pMaskMsg->Data[0], 4);
-            memcpy(&m.args[7], &pPatternMsg->Data[0], 4);
-            if (FilterType == FLOW_CONTROL_FILTER) {
-                memcpy(&m.args[11], &pFlowControlMsg->Data[0], 4);
-            }
-            usbcomm::sendMsg(&m);
-            LOGGER.logDebug("CAN_FILT", "Adding filter with ID %lu", *pFilterID);
-            return STATUS_NOERROR;
-        }
+int channel::setFilter(
+    unsigned long FilterType,
+    PASSTHRU_MSG* pMaskMsg,
+    PASSTHRU_MSG* pPatternMsg,
+    PASSTHRU_MSG* pFlowControlMsg,
+    unsigned long* pFilterID)
+{
+    if (pFilterID == nullptr) {
+        return ERR_NULL_PARAMETER;
     }
-    // No more free filters
-    LOGGER.logError("CAN_FILT", "Cannot add any more filters - Limit exceeded");
-    return ERR_EXCEEDED_LIMIT;
+
+    return VCI_StartFilter(
+        this->id,
+        FilterType,
+        pMaskMsg,
+        pPatternMsg,
+        pFlowControlMsg,
+        pFilterID
+    );
 }
 
 int channel::remove_filter(unsigned long filterID)
 {
-    // Filter doesn't exit?
-    if (filters[filterID - 1] == nullptr) {
-        LOGGER.logError("CAN_FILT", "Cannot remove filter with ID of %lu, does not exist!", filterID);
-        return ERR_INVALID_MSG_ID;
-    }
-    LOGGER.logDebug("CAN_FILT", "Removing filter with ID %lu", filterID);
-    // Filter exists, remove it
-    delete filters[filterID - 1];
-    filters[filterID - 1] = nullptr;
-    PCMSG m = { 0x00 };
-    m.cmd_id = CMD_CHANNEL_REM_FILTER;
-    m.arg_size = 2; // 1 for CID, 1 for FID
-    m.args[0] = this->id;
-    m.args[1] = filterID;
-    usbcomm::sendMsg(&m);
-    return STATUS_NOERROR;
+    return VCI_StopFilter(
+        this->id,
+        filterID
+    );
 }
 
 int channel::removeChannel()
 {
-    PCMSG m = {
-        CMD_CHANNEL_DESTROY,
-        1,
-    };
-    m.args[0] = this->id;
-    // Ensure Macchina removed the channel
-    PCMSG resp = {};
-    switch (usbcomm::sendMsgResp(&m, &resp))
-    {
-    case CMD_RES::CMD_OK:
-        return STATUS_NOERROR;
-    case CMD_RES::SEND_FAIL:
-        return ERR_DEVICE_NOT_CONNECTED;
-    case CMD_RES::CMD_FAIL:
-        LOGGER.logError("CHAN_DEL", "Macchina failed to remove channel");
-        return m.args[1];
-    case CMD_RES::CMD_TIMEOUT:
-        globals::setErrorString(usbcomm::getLastError());
-        return ERR_FAILED;
-    default:
-        LOGGER.logError("CHAN_DEL", "WTF - CMD_RES invalid??");
-        globals::setErrorString("CMD_RES invalid");
-        return ERR_FAILED;
-    }
+    return VCI_Disconnect(this->id);
 }
 
 void channel::recvData(uint8_t* m, uint16_t len)
@@ -351,10 +369,19 @@ void channel::recvData(uint8_t* m, uint16_t len)
     }
 }
 
-int channel::requestData(PASSTHRU_MSG* pMsg, unsigned long* pNumMsgs, unsigned long Timeout)
+int channel::requestData(
+    PASSTHRU_MSG* pMsg,
+    unsigned long* pNumMsgs,
+    unsigned long Timeout)
 {
-    if (this->handler != nullptr) {
-        return this->handler->requestData(pMsg, pNumMsgs, Timeout);
+    if (pMsg == nullptr || pNumMsgs == nullptr) {
+        return ERR_NULL_PARAMETER;
     }
-    return ERR_FAILED;
+
+    return VCI_Receive(
+        this->id,
+        pMsg,
+        pNumMsgs,
+        Timeout
+    );
 }

@@ -2,40 +2,37 @@
 #include "ioctl_handler.h"
 #include "Logger.h"
 #include "channel.h"
-#include "usbcomm.h"
 #include "globals.h"
 
 int ioctl_handler::set_config(unsigned long channelID, SCONFIG_LIST* pInput)
 {
-    if (pInput == nullptr) { return ERR_NULLPARAMETER; }
-    LOGGER.logDebug("IOCTL", "SET_CONFIG called for channel %d with %d param(s)", channelID, pInput->NumOfParams);
-    return channels.set_config(channelID, pInput);
+	return STATUS_NOERROR;
 }
 
 int ioctl_handler::get_config(unsigned long channelID, SCONFIG_LIST* pInput)
 {
-    if (pInput == nullptr) { return ERR_NULLPARAMETER; }
-    LOGGER.logDebug("IOCTL", "GET_CONFIG called for channel %d. Want %d param(s)", channelID, pInput->NumOfParams);
-    return channels.get_config(channelID, pInput);
+    return STATUS_NOERROR;
 }
 
 int ioctl_handler::read_batt(unsigned long* vbatt)
 {
-    if (vbatt == nullptr) { return ERR_NULLPARAMETER; }
-    LOGGER.logDebug("IOCTL", "READ_VBATT called");
-    PCMSG msg = {
-        CMD_IOCTL_GET,
-        0x01,
-        READ_VBATT
-    };
-    float f;
-    switch (usbcomm::sendMsgResp(&msg, 50)) {
-    case CMD_RES::CMD_OK:
-        *vbatt = (msg.args[1] << 24) & (msg.args[2] << 16) & (msg.args[3] << 8) & msg.args[4];
-        break;
-    default:
-        return ERR_FAILED;
+    if (vbatt == nullptr) {
+        globals::setErrorString("READ_VBATT: output pointer is null");
+        LOGGER.logError(
+            "IOCTL",
+            "READ_VBATT called with null output pointer"
+        );
+        return ERR_NULL_PARAMETER;
     }
+
+    *vbatt = globals::getBatVoltage();
+
+    LOGGER.logInfo(
+        "IOCTL",
+        "READ_VBATT -> %lu mV",
+        *vbatt
+    );
+
     return STATUS_NOERROR;
 }
 

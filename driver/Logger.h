@@ -26,7 +26,7 @@
 #include <Windows.h>
 #include <mutex>
 
-#define LOG_FILE "C:\\Program Files (x86)\\macchina\\passthru\\activity.log"
+#define LOG_FILE "C:\\Users\\Public\\Nyanko_activity.log"
 
 class Logger
 {

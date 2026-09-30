@@ -55,22 +55,54 @@ std::string Logger::argFormatToString(const char* fmt, va_list* args) {
 	return std::string(buffer);
 }
 
-void Logger::writeToFile(std::string message) {
-	char time[64] = { 0x00 };
-	SYSTEMTIME st;
-	GetSystemTime(&st);
-	sprintf_s(time, "[%02d:%02d:%02d.%3d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-	std::ofstream handle;
-	this->mutex.lock();
-	try {
-		handle.open(LOG_FILE, std::ios_base::app);
-		handle << time << message << "\n" << std::flush;
-		handle.close();
-	}
-	catch (std::ofstream::failure e) {
-		//TODO handle error
-	}
-	this->mutex.unlock();
+void Logger::writeToFile(std::string message)
+{
+    char tempPath[MAX_PATH] = { 0 };
+
+    DWORD len = GetTempPathA(
+        MAX_PATH,
+        tempPath
+    );
+
+    if (len == 0 || len >= MAX_PATH)
+        return;
+
+    char filePath[MAX_PATH] = { 0 };
+
+    sprintf_s(
+        filePath,
+        "%sNyanko_activity.log",
+        tempPath
+    );
+
+    std::lock_guard<std::mutex> lock(mutex);
+
+    std::ofstream handle(
+        filePath,
+        std::ios_base::app
+    );
+
+    if (!handle.is_open())
+        return;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    char time[64] = { 0 };
+
+    sprintf_s(
+        time,
+        "[%02d:%02d:%02d.%03d] ",
+        st.wHour,
+        st.wMinute,
+        st.wSecond,
+        st.wMilliseconds
+    );
+
+    handle << time
+        << message
+        << "\n"
+        << std::flush;
 }
 
 std::string Logger::bytesToString(uint8_t* bytes, unsigned long len) {

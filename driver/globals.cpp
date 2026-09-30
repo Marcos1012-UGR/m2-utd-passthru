@@ -22,7 +22,7 @@
 #include "globals.h"
 
 namespace globals {
-	unsigned long BAT_VOLTAGE = 12000; // 12.0 V as default - macchina will update on ping
+	unsigned long BAT_VOLTAGE = 12000; // 12.0 V default
 	std::string lastErrorMsg = "NO ERROR";
 
 	void setBatVoltage(unsigned long v)

@@ -24,19 +24,7 @@
     <ClInclude Include="Logger.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="macchina-passthru.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="j2534_v0404.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="usbcomm.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="commserver.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="macchina-passthru_dll.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="globals.h">
@@ -48,6 +36,18 @@
     <ClInclude Include="protocol_handler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vci.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ioctl_handler.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="nyanko-passthru.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="nyanko-passthru_dll.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -56,16 +56,7 @@
     <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="macchina-passthru.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="Logger.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="usbcomm.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="commserver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="globals.cpp">
@@ -77,9 +68,18 @@
     <ClCompile Include="protocol_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="vci.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ioctl_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="nyanko-passthru.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="macchina-passthru.def">
+    <None Include="nyanko-passthru.def">
       <Filter>Source Files</Filter>
     </None>
   </ItemGroup>
